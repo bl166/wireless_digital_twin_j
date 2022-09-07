@@ -164,11 +164,24 @@ def extract_topological_features(paths, input_file):
   for elem in paths:
     for i in elem:
       path_to_nodes.append(i)
+  node_to_paths = []
+  paths_to_nodes = []
+  seq_nodes_paths = []
+  countP = 0
+  for elem in paths:
+    count0 = -1
+    for i in range(len(elem)):
+      count0 += 1
+      if i < (len(elem)-1):
+        node_to_paths.append(elem[i])
+        paths_to_nodes.append(countP)
+        seq_nodes_paths.append(count0)
+    countP += 1
   names = ['n_paths', 'n_links', 'n_total', 'paths_to_links', 'links_to_paths', 'sequences_paths_links', 'link_to_node', "node_to_link", "link_seq",
          'path_to_node', 'node_to_path', 'path_seq']
 
   arrays = [len(paths), len(links), len(paths_ar), np.array(paths_ar), np.array(links_arr), np.array(seq), np.array(links_to_nodes), np.array(node_to_link),
-          np.array(link_seq), np.array(path_to_nodes), np.array(node_to_path), np.array(path_seq)]
+          np.array(link_seq), np.array(paths_to_nodes), np.array(node_to_paths), np.array(seq_nodes_paths)]
 
 
 
