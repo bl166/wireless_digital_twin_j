@@ -175,19 +175,80 @@ class UnoDataGen(tf.keras.utils.Sequence):
     def get_topological_features(self):
         """ 
           This method extracts all topological features.
-          
+
         """
 
-        links1 = list(np.array(self.graph_topology_directed.edges()))
+        # Gets all links and nodes as lists in the correct format. 
+        links, nodes = self.get_links_nodes_arrays()
+
+        # Get Path-Link related features. 
+        paths_to_links, links_to_paths, sequences_paths_links = self.get_path_link_features(links)
+
+        # Get Node-Link related features 
+        nodes_to_links, sequences_links_nodes, links_to_nodes = self.get_links_nodes(links, nodes)
+
+        # Path-Node
+        nodes_to_paths, paths_to_nodes, sequences_nodes_paths = self.get_paths_nodes()
+
+        # Degrees and Lalpacian Matrix.
+        degrees = [degree for _,degree in self.graph_topology_directed.out_degree()]
+
+        # Get sparse Laplacian Matrix.
+        laplacian = nx.laplacian_matrix(self.graph_topology_undirected) 
+
+        # Convert it to dense format.
+        laplacian = laplacian.todense()
+
+        topological_features={}
+
+        # Features that are expressed as a single number.
+        topological_features['n_paths'] = tf.Variable(tf.constant(len(self.paths)))
+        topological_features['n_links'] = tf.Variable(tf.constant(len(links)))
+        topological_features['n_nodes'] = tf.Variable(tf.constant(len(nodes)))
+        topological_features['n_total'] = tf.Variable(tf.constant(len(paths_to_links)))
+        
+        # Path-link related features. 
+        topological_features['paths_to_links'] = tf.Variable(tf.constant(paths_to_links))
+        topological_features['links_to_paths'] = tf.Variable(tf.constant(links_to_paths))
+        topological_features['sequences_paths_links'] = tf.Variable(tf.constant(sequences_paths_links))
+
+        # Link-node related features 
+        topological_features['links_to_nodes'] = tf.Variable(tf.constant(links_to_nodes))
+        topological_features['nodes_to_links'] = tf.Variable(tf.constant(nodes_to_links))
+        topological_features['sequences_links_nodes'] = tf.Variable(tf.constant(sequences_links_nodes))
+
+        # Path-node related features. 
+        topological_features['paths_to_nodes'] = tf.Variable(tf.constant(paths_to_nodes))
+        topological_features['nodes_to_paths']=tf.Variable(tf.constant(nodes_to_paths))
+        topological_features['sequences_nodes_paths'] = tf.Variable(tf.constant(sequences_nodes_paths))
+        
+        # General topological features, Laplacian matrix and degrees of all nodes.
+        topological_features["laplacian_matrix"] = tf.Variable(tf.constant(laplacian, dtype=np.float32))
+        topological_features["degrees"]    =  tf.Variable(tf.constant(degrees,dtype=np.float32))
+
+        return topological_features
+
+    def get_links_nodes_arrays(self):
+        """
+          Extracts links to nodes features.
+        """
+        links_from_numpy_to_list = list(np.array(self.graph_topology_directed.edges()))
+        # Links stores all links in the graph(edges)
         links = []
-        for elem in links1:
+        for elem in links_from_numpy_to_list:
             links.append(list(elem))
         
+        # Nodes as list in the sorted order.
         nodes = self.graph_topology_directed.nodes()
         nodes = list(nodes)
         nodes.sort()
 
-        # Path-Link
+        return links, nodes
+
+    def get_path_link_features(self, links):
+        """
+          Extracts paths to links features.
+        """
         sequences_paths_links = []
         paths_to_links = []
         links_to_paths = []
@@ -202,7 +263,12 @@ class UnoDataGen(tf.keras.utils.Sequence):
                     links_to_paths.append(a)
             count += 1
 
-        # Node-Link
+        return paths_to_links, links_to_paths, sequences_paths_links
+
+    def get_links_nodes(self, links, nodes):
+        """
+          Extracta links to nodes features.
+        """
         nodes_to_links = []
         sequences_links_nodes = []
         count_link=0
@@ -216,13 +282,12 @@ class UnoDataGen(tf.keras.utils.Sequence):
         links_to_nodes = []
         for i in range(len(links)):
             links_to_nodes.append(links[i][0])
+        return nodes_to_links, sequences_links_nodes, links_to_nodes
 
-        # Path-Node
-        path_to_nodes = []
-        for elem in self.paths:
-            for i in elem:
-                path_to_nodes.append(i)
-
+    def get_paths_nodes(self):
+        """
+          Extracts paths to nodes features. 
+        """
         nodes_to_paths = []
         paths_to_nodes = []
         sequences_nodes_paths = []
@@ -236,36 +301,7 @@ class UnoDataGen(tf.keras.utils.Sequence):
                     paths_to_nodes.append(countP)
                     sequences_nodes_paths.append(count0)
             countP += 1
-
-
-        # Degrees and laplacian
-        degrees = [degree for _,degree in self.graph_topology_directed.out_degree()]
-        laplacian = nx.laplacian_matrix(self.graph_topology_undirected) # Returns sparse laplacian
-        laplacian = laplacian.todense()
-
-        topological_features={}
-
-        topological_features['n_paths'] = tf.Variable(tf.constant(len(self.paths)))
-        topological_features['n_links'] = tf.Variable(tf.constant(len(links)))
-        topological_features['n_nodes'] = tf.Variable(tf.constant(len(nodes)))
-        topological_features['n_total'] = tf.Variable(tf.constant(len(paths_to_links)))
-        
-        topological_features['paths_to_links'] = tf.Variable(tf.constant(paths_to_links))
-        topological_features['links_to_paths'] = tf.Variable(tf.constant(links_to_paths))
-        topological_features['sequences_paths_links'] = tf.Variable(tf.constant(sequences_paths_links))
-
-        topological_features['links_to_nodes'] = tf.Variable(tf.constant(links_to_nodes))
-        topological_features['nodes_to_links'] = tf.Variable(tf.constant(nodes_to_links))
-        topological_features['sequences_links_nodes'] = tf.Variable(tf.constant(sequences_links_nodes))
-
-        topological_features['paths_to_nodes'] = tf.Variable(tf.constant(paths_to_nodes))
-        topological_features['nodes_to_paths']=tf.Variable(tf.constant(nodes_to_paths))
-        topological_features['sequences_nodes_paths'] = tf.Variable(tf.constant(sequences_nodes_paths))
-        
-        topological_features["laplacian_matrix"] = tf.Variable(tf.constant(laplacian, dtype=np.float32))
-        topological_features["degrees"]    =  tf.Variable(tf.constant(degrees,dtype=np.float32))
-
-        return topological_features
+        return nodes_to_paths, paths_to_nodes, sequences_nodes_paths
 
     def __len__(self):
         return self.n 
