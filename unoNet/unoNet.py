@@ -1,16 +1,31 @@
-
 import tensorflow as tf
 import spektral as spk
 import json
 
 class unoNet(tf.keras.Model):
+    """ 
+      This class initialzes a model, trains it and evaluates
+      on both training dataset and testing dataset(or validation).
+      The loss for training and testing might be different,
+      therefore it is split into two different methods.
+      Overall, this class follows Functional API for TF2,
+      and incldues classic __init__, build, and call methods.
+    """
     def __init__(self,config, output_units=1):
+        """
+          Initializes the model using config file.
+        """
         super(unoNet, self).__init__()
 
         self.config = config
         self.output_units = output_units
         
     def build(self, input_shape=None):
+        """
+          Builds the NN model and initializes
+          all layers and parameters and hyperparameters of it.
+
+        """
         del input_shape
 
         self.path_update = tf.keras.layers.RNN(
@@ -53,6 +68,12 @@ class unoNet(tf.keras.Model):
         self.built = True
 
     def call(self, inputs, training=False):
+        """
+          Makes transformation from inputs to outputs and backwards.
+          Essentially makes forward and backward passes.
+          All updates happen here.
+
+        """
         
         f_ = inputs
         # Link state initialization
@@ -79,7 +100,9 @@ class unoNet(tf.keras.Model):
         ], axis=1)
         
         for _ in range(int(self.config['GNN']['T'])):
+
             ###################### PATH STATE #################################
+
             ids=tf.stack([f_["paths_to_links"], f_["sequences_paths_links"]], axis=1)
             max_len = tf.reduce_max(f_["sequences_paths_links"])+1 # Length of the path with maximum number of links
 
@@ -128,7 +151,10 @@ class unoNet(tf.keras.Model):
 
     @tf.function
     def train_step(self, data):
-        print(data)
+        """ 
+          Method to perform one step of training on inputted data.
+        """
+        # print(data)
         features, labels = data
         
         with tf.GradientTape() as tape:
@@ -153,6 +179,9 @@ class unoNet(tf.keras.Model):
 
     @tf.function
     def test_step(self, data):
+        """ 
+          Method to perform one step of evaluating on inputted data.
+        """
         features, labels = data
         
         with tf.GradientTape() as tape:
