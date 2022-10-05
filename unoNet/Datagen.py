@@ -7,38 +7,71 @@ import spektral as spk
 import networkx as nx
 import glob
 
-
-
-
 def getTopology(g):
+    """
+      Input: 
+        -- Parsed graph g.
+      Output: 
+        -- Undirected graph, nx Graph object.
+    """
+
+    #Initiliazes empty graph, later adds edges(no additional params for edges)
     g1=nx.Graph()
     for uu, vv, keys, weight in g.edges(data="bandwidth", keys=True):
         g1.add_edge(uu,vv)
     return g1
 
 def getDirectedTopology(g):
+    """
+      Input: 
+        -- Parsed graph g.
+      Output: 
+        -- Directed graph, nx DiGraph object.
+    """
+
+    #Initiliazes empty graph, later adds edges(direction is the only param for an edge)
     g1=nx.DiGraph()
     for uu, vv, keys, weight in g.edges(data="bandwidth", keys=True):
         g1.add_edge(uu,vv)
     return g1
 
 def get_data_generators(dataPath, paths,config):
+      """
+        Inputs:
+          -- dataPath is a string, a path to the directory which stores all the data.
+             Preferrably absolute path.
+          -- paths is numpy array of all paths that used for the given topology.
+          -- config is result of reading config.ini and parsing it.
+        Outputs:
+          -- Three UnoDataGen objects: for training, validation, and testing.
+
+      """
+
+
+      # To include all Key Performance Indicators files 
       kpi_ = '/*kpis.txt'
+
+      # To include all traffic files 
       tfc_ = '/*traffic.txt'
+
+      # To split into train/validate/test 
       traincon = '/train'
       valcon = '/validate'
       testcon = '/test'
 
+      # All files necessary for training
       trainkpis = glob.glob(dataPath+traincon+kpi_)
       trainkpis.sort()
       traintraffics = glob.glob(dataPath+traincon+tfc_)
       traintraffics.sort()
 
+      # All files necessary for validation
       valkpis = glob.glob(dataPath+valcon+kpi_)
       valkpis.sort()
       valtraffics = glob.glob(dataPath+valcon+tfc_)
       valtraffics.sort()
 
+      # All files necessary for testing 
       testkpis = glob.glob(dataPath+testcon+kpi_)
       testkpis.sort()
       testtraffics = glob.glob(dataPath+testcon+tfc_)
@@ -47,10 +80,17 @@ def get_data_generators(dataPath, paths,config):
       traingen = UnoDataGen((trainkpis, traintraffics),config['Paths']['graph'],paths)
       valgen = UnoDataGen((valkpis, valtraffics),config['Paths']['graph'],paths)
       testgen = UnoDataGen((testkpis, testtraffics),config['Paths']['graph'],paths)
+
       return traingen, valgen, testgen
 
 class combinedDataGens(tf.keras.utils.Sequence):
+    """
+     This class takes two UnoDataGen objects and returns their common [features, labels].
+    """
     def __init__(self, dataGen1,dataGen2):
+        """
+            Initialize each UnoDataGen object dataset, get total number of data points.
+        """
         self.dataGen1 = dataGen1
         self.dataGen2 = dataGen2
         
@@ -59,6 +99,9 @@ class combinedDataGens(tf.keras.utils.Sequence):
         self.n = self.n1+self.n2
     
     def __getitem__(self,index=None):
+        """
+            Get item method for the combined dataset.
+        """
         if index<self.n1:
             return self.dataGen1.__getitem__(index)
         else:
@@ -70,25 +113,45 @@ class combinedDataGens(tf.keras.utils.Sequence):
 
 class UnoDataGen(tf.keras.utils.Sequence):
     def __init__(self, filenames,graphFile,routing):
+        """
+          Inputs: 
+            -- filanames is tuple with all filenames for kpi and traffic.
+               Each of elems in tuple is a list with all filenames.
+            -- graphFile is pathname to read graph from. .gml filename.
+            -- routing is numpy array with all paths.
+        """
+
+        # Split key performance indicators and traffic.
         kpis, tris = filenames
         
+        # Initialiaze how kpi as pandas dataframe looks like.
         kpiframe = pd.read_csv(kpis[0], header=None)
+        # Add columns for indexing. 
         self.kpiframe = kpiframe.reset_index(drop=True)
 
+        # Number of datapoints 
         self.n = kpiframe.shape[0]
         triframe = pd.read_csv(tris[0], header=None)
         self.triframe = triframe.reset_index(drop=True)
     
+        # Create a graph(undir and dir version) and store routing 
         multiGraph = nx.read_gml(graphFile, destringizer=int)
         self.graph_topology_undirected = getTopology(multiGraph)
         self.graph_topology_directed = getDirectedTopology(multiGraph)
         self.paths = routing
+
     def on_epoch_end(self):
         pass
         
     def __getitem__(self, index=None):
+        """ 
+          Returns features and corresponding expected labels by reading topological features. 
+        """
+
+        # Get topological features as dictionary.
         features=self.get_topological_features()
 
+        # Get values for specific data point 
         a = self.triframe.loc[index]
         b = self.kpiframe.loc[index]
         
@@ -110,6 +173,11 @@ class UnoDataGen(tf.keras.utils.Sequence):
         return [features, labels]
     
     def get_topological_features(self):
+        """ 
+          This method extracts all topological features.
+          
+        """
+
         links1 = list(np.array(self.graph_topology_directed.edges()))
         links = []
         for elem in links1:
