@@ -7,6 +7,23 @@ import spektral as spk
 import networkx as nx
 import glob
 
+def get_paths_from_routing(routing):
+    if (routing=="paths1"):
+        # NSFNet Routing-1
+        paths = np.array([[0,1,7], [1,7,10,11], [2,5,13], [3,0], [6,4,5], [9,12], [10,9,8], [11,10], [12,9], [13,5,4,3]])
+
+    elif (routing=="paths2"):
+        # NSFNet Routing-2
+        paths = np.array([[9, 10, 7, 1],[3, 4, 5, 13],[12, 5, 2, 0],[10, 9, 8, 3],
+                    [13, 10, 7],[1, 0, 3, 8],[2, 5, 12, 9],[11, 12, 5, 2],
+                    [6, 4, 5, 12],[5, 12, 11],[0, 1, 7, 10],[7, 6, 4]])
+
+    elif (routing=="paths3"):
+        # GBN Routing-1
+        paths = np.array([[0, 2, 4, 9, 12, 14, 15],[2, 0, 8, 5, 6],[8, 4, 10, 11, 13],[14, 12, 9, 3, 1],
+                        [4, 9, 12],[16, 12, 9, 4, 8, 5],[15, 14, 12, 10],[9, 4, 2],[11, 10, 4],[13, 11, 10, 4, 2, 0]])
+    return paths
+
 def getTopology(g):
     """
       Input: 
@@ -141,7 +158,10 @@ class UnoDataGen(tf.keras.utils.Sequence):
         self.paths = routing
 
     def on_epoch_end(self):
-        pass
+        # Shuffle data at the end of every epoch
+        idx = np.random.permutation(self.kpiframe.index)
+        self.kpiframe.reindex(idx)
+        self.triframe.reindex(idx)
         
     def __getitem__(self, index=None):
         """ 
