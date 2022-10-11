@@ -3,33 +3,29 @@ import numpy as np
 import glob
 import os,pdb
 import datetime
-from Datagen import get_data_generators
+from Datagen import get_data_generators, get_paths_from_routing
 import configparser
 from unoNet import unoNet
-
+os.environ["CUDA_VISIBLE_DEVICES"]="-1"
 if __name__=="__main__":
     
     config = configparser.ConfigParser()
     config.read('config.ini')
 
-    # NSFNet Routing-1
-    paths = np.array([[0,1,7], [1,7,10,11], [2,5,13], [3,0], [6,4,5], [9,12], [10,9,8], [11,10], [12,9], [13,5,4,3]])
-    dataPath = '/root/wireless_dataset_v0/ns-3.35/WirelessDataset/digi_twin_summer_wireless_dataset/NSFNet_routing_1'
-    traingen, valgen, testgen,test2gen = get_data_generators(dataPath,paths,config)
+    paths = get_paths_from_routing(config['Paths']['routing'])
+    traingen, valgen, testgen = get_data_generators(config['Paths']['data'],paths,config['Paths']['graph'])
     
     model = unoNet(config)
     model.build()
     model.compile()
 
-    checkpoint_filepath = "logs/ckpt/20221004-120050"
+    checkpoint_filepath = "setting-3/solo_gbn/logs/ckpt/20221010-123622"
 
     model.load_weights(checkpoint_filepath)
 
-    model.evaluate(testgen)
-
     delay_predicted = model.predict(testgen)
-    delay_predicted = delay_predicted.reshape(1000,10)
+    delay_predicted = delay_predicted.reshape(testgen.__len__(),10) # 10 paths for this routing
 
-    predictionSavePath = '/root/wireless_dataset_v0/tf_codes/delay_unoNet.txt'
+    predictionSavePath = 'setting-3/solo_gbn/delay_gbn.txt'
     np.savetxt(predictionSavePath,delay_predicted,delimiter=",")
 

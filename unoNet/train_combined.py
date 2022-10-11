@@ -7,7 +7,7 @@ import spektral as spk
 import glob
 import os,pdb
 import datetime
-from Datagen import get_data_generators, combinedDataGens
+from Datagen import get_data_generators, combinedDataGens, get_paths_from_routing
 import configparser
 from unoNet import unoNet
 
@@ -30,24 +30,27 @@ os.environ["CUDA_VISIBLE_DEVICES"]="0"
 if __name__=="__main__":
     
     config = configparser.ConfigParser()
-    config.read('config.ini')
+    config.read('config_combined.ini')
 
-    # NSFNet Routing-1
-    paths = np.array([[0,1,7], [1,7,10,11], [2,5,13], [3,0], [6,4,5], [9,12], [10,9,8], [11,10], [12,9], [13,5,4,3]])
-    dataPath = '/root/wireless_dataset_v0/ns-3.35/WirelessDataset/digi_twin_summer_wireless_dataset/NSFNet_routing_1'
-    traingen, valgen, testgen = get_data_generators(dataPath,paths,config)
+    # For combined training
+    routingList = config['Paths']['routing'].split()
+    dataList = config['Paths']['data'].split()
+    graphList = config['Paths']['graph'].split()
+  
+    trainGenList = []
+    testGenList = []
+    valGenList= []
     
-    # NSFNet Routing-2
-    paths2 = np.array([[9, 10, 7, 1],[3, 4, 5, 13],[12, 5, 2, 0],[10, 9, 8, 3],
-                      [13, 10, 7],[1, 0, 3, 8],[2, 5, 12, 9],[11, 12, 5, 2],
-                      [6, 4, 5, 12],[5, 12, 11],[0, 1, 7, 10],[7, 6, 4]])
-    dataPath2 = '/root/wireless_dataset_v0/ns-3.35/WirelessDataset/digi_twin_summer_wireless_dataset/NSFNet_routing_2'
-    traingen2, valgen2, testgen2 = get_data_generators(dataPath2,paths2,config)
+    for i in range(len(routingList)):
+      paths = get_paths_from_routing(routingList[i])
+      trainGen, valGen, testGen = get_data_generators(dataList[i],paths,graphList[i])
+      trainGenList.append(trainGen)
+      valGenList.append(valGen)
+      testGenList.append(testGen)
+
     
-    # pdb.set_trace()
-    # Combining datasets
-    traingen_comb = combinedDataGens(traingen,traingen2)
-    valgen_comb = combinedDataGens(valgen,valgen2)
+    traingen_comb = combinedDataGens(trainGenList[0],trainGenList[1])
+    valgen_comb = combinedDataGens(valGenList[0],valGenList[1])
     
     initial_learning_rate = float(config['LearningParams']['learning_rate'])
 
@@ -59,10 +62,10 @@ if __name__=="__main__":
 
     optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
 
-    log_dir = "logsComb/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_dir = config['Paths']['logs']+"fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
 
-    checkpoint_filepath = "logsComb/ckpt/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    checkpoint_filepath = config['Paths']['logs']+"ckpt/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
         filepath=checkpoint_filepath,
         save_weights_only=True,

@@ -4,7 +4,7 @@ import tensorflow as tf
 import numpy as np
 import os
 import datetime
-from Datagen import get_data_generators
+from Datagen import get_data_generators, get_paths_from_routing
 import configparser
 from unoNet import unoNet
 
@@ -21,7 +21,7 @@ if gpus:
     print(e)
 
 print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
-os.environ["CUDA_VISIBLE_DEVICES"]="0"
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
 
 
 if __name__=="__main__":
@@ -29,10 +29,8 @@ if __name__=="__main__":
     config = configparser.ConfigParser()
     config.read('config.ini')
 
-    # NSFNet Routing-1
-    paths = np.array([[0,1,7], [1,7,10,11], [2,5,13], [3,0], [6,4,5], [9,12], [10,9,8], [11,10], [12,9], [13,5,4,3]])
-    dataPath = '/root/wireless_dataset_v0/ns-3.35/WirelessDataset/digi_twin_summer_wireless_dataset/NSFNet_routing_1'
-    traingen, valgen, testgen = get_data_generators(dataPath,paths,config)
+    paths = get_paths_from_routing(config['Paths']['routing'])
+    traingen, valgen, testgen = get_data_generators(config['Paths']['data'],paths,config['Paths']['graph'])
     
     initial_learning_rate = float(config['LearningParams']['learning_rate'])
     lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
@@ -43,10 +41,10 @@ if __name__=="__main__":
 
     optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
 
-    log_dir = "logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_dir = config['Paths']['logs']+"fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
 
-    checkpoint_filepath = "logs/ckpt/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    checkpoint_filepath = config['Paths']['logs']+"ckpt/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
         filepath=checkpoint_filepath,
         save_weights_only=True,
