@@ -48,9 +48,9 @@ class unoNet(tf.keras.Model):
         
         #readout-final
         self.readout = tf.keras.models.Sequential(name='readout')
-
-        for i in range(int(self.config['GNN']['readout_layers'])):
-            self.readout.add(tf.keras.layers.Dense(int(self.config['GNN']['readout_units']), 
+        readoutLayerSizes = json.loads(self.config.get('GNN','readoutLayerSizes'))
+        for i in range(len(readoutLayerSizes)):
+            self.readout.add(tf.keras.layers.Dense(readoutLayerSizes[i], 
                     activation=tf.nn.relu,
                     kernel_regularizer=tf.keras.regularizers.L2(float(self.config['LearningParams']['l2']))))
 
@@ -64,7 +64,7 @@ class unoNet(tf.keras.Model):
                                             int(self.config['GNN']['path_state_dim'])]))
 
         self.readout.build(input_shape = [None,int(self.config['GNN']['path_state_dim'])])
-        self.final.build(input_shape = [None,int(self.config['GNN']['path_state_dim']) + int(self.config['GNN']['readout_units']) ])
+        self.final.build(input_shape = [None,int(self.config['GNN']['path_state_dim']) + readoutLayerSizes[-1] ])
         self.built = True
 
     def call(self, inputs, training=False):
