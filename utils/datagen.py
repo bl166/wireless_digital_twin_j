@@ -271,7 +271,7 @@ class PlanDataGen(tf.keras.utils.Sequence):
 
         return topological_features
     
-
+    
     def get_links_nodes_arrays(self):
         """
           Extracts links to nodes features.
@@ -297,35 +297,35 @@ class PlanDataGen(tf.keras.utils.Sequence):
         paths_to_links = []
         links_to_paths = []
         count = 0
-        for elem in self.paths:
-            for i in range(len(list(elem))):
-                if i != len(list(elem))-1:
-                    paths_to_links.append(count)
-                    sequences_paths_links.append(i)
-                    b = [elem[i], elem[i+1]]
+        for elem in self.paths:  # for each path
+            for i in range(len(list(elem))): # for each node in the path
+                if i != len(list(elem))-1:       # if not the last node
+                    paths_to_links.append(count)     # append path index
+                    sequences_paths_links.append(i)  # append the index of node within the path [??]
+                    b = [elem[i], elem[i+1]]         # the link from src node to dst node
                     a = links.index(b)
-                    links_to_paths.append(a)
+                    links_to_paths.append(a)         # append link index
             count += 1
-        return paths_to_links, links_to_paths, sequences_paths_links
+        return paths_to_links, links_to_paths, sequences_paths_links  #n_total
 
     def get_links_nodes(self, links, nodes):
         """
           Extracta links to nodes features.
         """
-        nodes_to_links = []
-        sequences_links_nodes = []
+        nodes_to_links = []  # **list of link indices that start with each node**
+        sequences_links_nodes = []  # **chunks nodes_to_links by which nodes**
         count_link = 0
-        for elem in nodes:
-            for i in range(len(links)):
-                if links[i][0] == elem:
-                    nodes_to_links.append(i)
-                    sequences_links_nodes.append(count_link)
+        for elem in nodes:        # for each node
+            for i in range(len(links)):   # for each link
+                if links[i][0] == elem:          # if this node is the source node of the link 
+                    nodes_to_links.append(i)                 # append link index
+                    sequences_links_nodes.append(count_link) # append node count (same to node index)
             count_link += 1
 
-        links_to_nodes = []
-        for i in range(len(links)):
-            links_to_nodes.append(links[i][0])
-        return nodes_to_links, sequences_links_nodes, links_to_nodes
+        links_to_nodes = []  # **list of src node index of all links (order = link index order)**
+        for i in range(len(links)):      # for each link
+            links_to_nodes.append(links[i][0])  # append the source node index
+        return nodes_to_links, sequences_links_nodes, links_to_nodes  #n_link
 
     def get_paths_nodes(self):
         """
@@ -335,16 +335,16 @@ class PlanDataGen(tf.keras.utils.Sequence):
         paths_to_nodes = []
         sequences_nodes_paths = []
         countP = 0
-        for elem in self.paths:
+        for elem in self.paths:  # for each path
             count0 = -1
-            for i in range(len(elem)):
+            for i in range(len(elem)):  # for each node in the path
                 count0 += 1
-                if i < (len(elem)-1):
-                    nodes_to_paths.append(elem[i])
-                    paths_to_nodes.append(countP)
-                    sequences_nodes_paths.append(count0)
+                if i < (len(elem)-1):          # if not the last node
+                    nodes_to_paths.append(elem[i])       # append node index
+                    paths_to_nodes.append(countP)        # append path index 
+                    sequences_nodes_paths.append(count0) # append the index of node in the path 
             countP += 1
-        return nodes_to_paths, paths_to_nodes, sequences_nodes_paths
+        return nodes_to_paths, paths_to_nodes, sequences_nodes_paths  # len = number of links in all paths added up
 
     def __len__(self):
         return self.n 
