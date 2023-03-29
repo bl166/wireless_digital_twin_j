@@ -1,4 +1,5 @@
-
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
 from asyncio import constants
 from unicodedata import name
 import tensorflow as tf
@@ -8,29 +9,62 @@ import spektral as spk
 import networkx as nx
 import glob
 import os
+import ast
 
 def get_paths_from_routing(routing):
     if (routing=="paths1"):
         # NSFNet Routing-1
         paths = np.array([
-            [0,1,7], [1,7,10,11], [2,5,13], [3,0], [6,4,5], 
-            [9,12], [10,9,8], [11,10], [12,9], [13,5,4,3]
+            [0, 1, 7], 
+            [1, 7, 10, 11], 
+            [2, 5, 13], 
+            [3, 0], 
+            [6, 4, 5], 
+            [9, 12], 
+            [10, 11, 8],#[10, 9, 8], 
+            [11, 10], 
+            [12, 9], 
+            [13, 5, 4, 3]
         ], dtype=object)
-
     elif (routing=="paths2"):
         # NSFNet Routing-2
         paths = np.array([
-            [9, 10, 7, 1],[3, 4, 5, 13],[12, 5, 2, 0],[10, 9, 8, 3], [13, 10, 7],
-            [1, 0, 3, 8],[2, 5, 12, 9],[11, 12, 5, 2],[6, 4, 5, 12],[5, 12, 11],
-            [0, 1, 7, 10],[7, 6, 4]
+            [9, 10, 7, 1],
+            [3, 4, 5, 13],
+            [12, 5, 2, 0],
+            [10, 9, 8, 3], 
+            [13, 10, 7],
+            [1, 0, 3, 8],
+            [2, 5, 12, 9],
+            [11, 12, 5, 2],
+            [6, 4, 5, 12],
+            [5, 12, 11],
+            [0, 1, 7, 10],
+            [7, 6, 4]
         ], dtype=object)
-
     elif (routing=="paths3"):
         # GBN Routing-1
         paths = np.array([
-            [0, 2, 4, 9, 12, 14, 15],[2, 0, 8, 5, 6],[8, 4, 10, 11, 13],[14, 12, 9, 3, 1], [4, 9, 12],
-            [16, 12, 9, 4, 8, 5],[15, 14, 12, 10],[9, 4, 2],[11, 10, 4],[13, 11, 10, 4, 2, 0]
+            [0, 2, 4, 9, 12, 14, 15],
+            [2, 0, 8, 5, 6],
+            [8, 4, 10, 11, 13],
+            [14, 12, 9, 3, 1],
+            [4, 9, 12],
+            [16, 12, 9, 4, 8, 5],
+            [15, 14, 12, 10],
+            [9, 4, 2],
+            [11, 10, 4],
+            [13, 11, 10, 4, 2, 0]
         ], dtype=object)
+    else:
+        raise
+    return paths
+
+def get_paths_from_routing_dynamic(filename):
+    paths = []
+    with open(filename, 'r') as f:
+        for p in f.readlines():
+            paths.append(ast.literal_eval(p)) 
     return paths
 
 def getTopology(g):
@@ -46,6 +80,19 @@ def getTopology(g):
         g1.add_edge(uu,vv)
     return g1
 
+def getTopologyWeighted(g):
+    """
+      Input: 
+        -- Parsed graph g.
+      Output: 
+        -- Undirected graph, nx Graph object.
+    """
+    #Initiliazes empty graph, later adds edges(no additional params for edges)
+    g1=nx.Graph()
+    for uu, vv, weight in g.edges(data="weight"):
+        g1.add_weighted_edges_from([(uu, vv, weight)])
+    return g1
+
 def getDirectedTopology(g):
     """
       Input: 
@@ -57,6 +104,19 @@ def getDirectedTopology(g):
     g1=nx.DiGraph()
     for uu, vv, keys, weight in g.edges(data="bandwidth", keys=True):
         g1.add_edge(uu,vv)
+    return g1
+
+def getDirectedTopologyWeighted(g):
+    """
+      Input: 
+        -- Parsed graph g.
+      Output: 
+        -- Undirected graph, nx Graph object.
+    """
+    #Initiliazes empty graph, later adds edges(no additional params for edges)
+    g1=nx.DiGraph()
+    for uu, vv, weight in g.edges(data="weight"):
+        g1.add_weighted_edges_from([(uu, vv, weight)])
     return g1
 
 
@@ -84,10 +144,9 @@ def get_data_gens_sets(config):
         return tuple(output_types), tuple(output_shapes) # must be tuples!
 
     # To split into train/validate/test 
-    files_kips, files_traf, datagens = {}, {}, {}
-    for p in ['train', 'validate', 'test']:
-        datagens[p] = []
-        
+    files_kips, files_traf, files_path, files_grap = {}, {}, {}, {}
+    input_argws_gen, datagens = {}, {}
+    for p in ['train', 'validate', 'test']:       
         # To include all Key Performance Indicators files 
         files_kips[p] = sum([glob.glob(os.path.join(dp, p, '*kpis.txt')) for dp in config['Paths']['data']], [])
         files_kips[p].sort() ## You should make sure the file order is correct 
@@ -96,27 +155,41 @@ def get_data_gens_sets(config):
         files_traf[p] = sum([glob.glob(os.path.join(dp, p, '*traffic.txt')) for dp in config['Paths']['data']], [])
         files_traf[p].sort()
         
-        input_argws_gen = {'graphFile': config['Paths']['graph'], 'routing': config['Paths']['routing']}
-        datagens[p] = PlanDataGensMulti( filenames=(files_kips[p], files_traf[p]), **input_argws_gen)
+        # To include all paths files
+        files_path[p] = sum([glob.glob(os.path.join(dp, p, '*paths.txt')) for dp in config['Paths']['data']], [])
+        files_path[p].sort()  
+        
+        # To include all graph files
+        files_grap[p] = config['Paths']['graph']
+        if not files_grap[p][0].endswith('gml'):
+            files_grap[p] = sum([glob.glob(os.path.join(dp, p, '*gfiles.txt')) for dp in config['Paths']['data']], [])
+            files_grap[p].sort()
+        
+        input_argws_gen[p] = {
+            'graphFile': config['Paths']['graph'] if not files_grap[p] else files_grap[p],
+            'routing': config['Paths']['routing'] if not files_path[p] else files_path[p]
+        }
+        datagens[p] = PlanDataGensMulti( filenames=(files_kips[p], files_traf[p]), **input_argws_gen[p])
         
     #DO *NOT* WRITE THE FOLLOWING IN A LOOP!! 
     #i haven't figured out why but it will cause difference in validation.
     #might have something to do with whatever internal manipulation by tf.. weirdest thing i've ever seen @A@
     input_argws_set = dict(zip(['output_types', 'output_shapes'], get_output_format(datagens['train'])))
+    print('input_argws_set:', input_argws_set)
+
     datasets = {}
     datasets['train'] = tf.data.Dataset.from_generator(
-        lambda: PlanDataGensMulti(filenames=(files_kips['train'], files_traf['train']), **input_argws_gen), 
+        lambda: PlanDataGensMulti(filenames=(files_kips['train'], files_traf['train']), **input_argws_gen['train']), 
         **input_argws_set
     )
     datasets['validate'] = tf.data.Dataset.from_generator(
-        lambda: PlanDataGensMulti(filenames=(files_kips['validate'], files_traf['validate']), **input_argws_gen), 
+        lambda: datagens['validate'],#PlanDataGensMulti(filenames=(files_kips['validate'], files_traf['validate']), **input_argws_gen['validate']), 
         **input_argws_set
     )
     datasets['test'] = tf.data.Dataset.from_generator(
-        lambda: PlanDataGensMulti(filenames=(files_kips['test'], files_traf['test']), **input_argws_gen), 
+        lambda: datagens['test'],#PlanDataGensMulti(filenames=(files_kips['test'], files_traf['test']), **input_argws_gen['test']), 
         **input_argws_set
     )
-
     return datagens, datasets
 
 
@@ -150,9 +223,9 @@ class PlanDataGen(tf.keras.utils.Sequence):
             -- filanames is tuple with filenames for kpi and traffic.
                Each of elems in tuple is a srting of the filename.
             -- graphFile is pathname to read graph from. .gml filename.
-            -- routing is numpy array with all paths.
+            -- routing is numpy array with all paths (or routing tables filename).
         """
-        super(PlanDataGen, self).__init__()
+        super().__init__()
 
         # Split key performance indicators and traffic.
         kpis, tris = filenames
@@ -160,6 +233,7 @@ class PlanDataGen(tf.keras.utils.Sequence):
         tris = tris[0] if isinstance(tris, (list, tuple)) else tris
         graphFile = graphFile[0] if isinstance(graphFile, (list, tuple)) else graphFile
         routing = routing[0] if isinstance(routing, (list, tuple)) else routing
+        print("PlanDataGen:", routing)
         
         # Initialiaze how kpi as pandas dataframe looks like.
         kpiframe = pd.read_csv(kpis, header=None)
@@ -172,45 +246,108 @@ class PlanDataGen(tf.keras.utils.Sequence):
         self.triframe = triframe.reset_index(drop=True).values.astype(np.float32)
     
         # Create a graph(undir and dir version) and store routing 
+        self.get_graphs(graphFile)
+        
+        # Paths
+        self.get_paths(routing)
+        
+    def read_graph_gml(self, graphFile):
+        # read single graph
         multiGraph = nx.read_gml(graphFile, destringizer=int)
-        self.graph_topology_undirected = getTopology(multiGraph)
-        self.graph_topology_directed = getDirectedTopology(multiGraph)
-        self.paths = get_paths_from_routing(routing)
+        if 'wifi' in graphFile.lower():
+            self.graph_topology_undirected = getTopologyWeighted(multiGraph)
+            self.graph_topology_directed = getDirectedTopologyWeighted(multiGraph)
+        else:
+            self.graph_topology_undirected = getTopology(multiGraph)
+            self.graph_topology_directed = getDirectedTopology(multiGraph)
+                
+    def get_graphs(self, graphFile):
+        self.graph_files = []
+        if graphFile.endswith('.gml'): 
+            # read single graph
+            self.read_graph_gml(graphFile)
+        else:
+            # to read a list of graph
+            with open(graphFile, 'r') as f:
+                self.graph_files = f.read().splitlines()
+                self.graph_topology_undirected = None
+                self.graph_topology_directed = None
+        
+    def get_paths(self, routing):
+        if not routing.endswith('.txt'):
+            self.paths_all = None
+            self.paths = get_paths_from_routing(routing)
+            return self.paths
+        else:
+            self.paths_all = get_paths_from_routing_dynamic(routing)
+            self.paths = self.paths_all[0]
+            return self.paths_all
 
     def on_epoch_end(self):
         # Shuffle data at the end of every epoch
         idx = np.random.permutation(self.n)
         self.kpiframe = self.kpiframe[idx]
         self.triframe = self.triframe[idx]
-       
+        if self.paths_all is not None:
+            self.paths_all = [self.paths_all[i] for i in idx]
+        if len(self.graph_files):
+            self.graph_files = [self.graph_files[i] for i in idx]
+    
+    def get_prepare(self, index):
+        # Determine which frame and topo to use
+        if self.paths_all is not None:
+            self.paths = self.paths_all[index]
+        if len(self.graph_files):
+            self.read_graph_gml(self.graph_files[index])
+        return index
+    
     def __getitem__(self, index=None):
         """ 
           Returns features and corresponding expected labels by reading topological features. 
         """
+        index = self.get_prepare(index)
+        
         # Get topological features as dictionary.
-        features=self.get_topological_features()
+        features = self.get_topological_features()
 
         # Get values for specific data point 
         a = self.triframe[index]
         b = self.kpiframe[index]
         
         n_links = len(self.graph_topology_directed.edges())
-        f_capacities = [1.0]*n_links
-
+        try:
+            for e in self.graph_topology_directed.edges():
+                f_capacities.append(self.graph_topology_directed[e[0]][e[1]]['weight'])
+        except:
+            f_capacities = [1.0]*n_links ##
+            
         traffic_in = a[0::2]#[float(a[i]) for i in range(0, len(a), 2)]
         traffic_ot = a[1::2]#[float(a[i]) for i in range(1, len(a), 2)]
         f_traffic = np.array([traffic_in, traffic_ot])
 
         features["path_init"] = tf.Variable(tf.constant(f_traffic), name="path_init")
         features["link_init"] = tf.Variable(tf.constant(f_capacities), name="link_init")
+        
+        n_path = len(traffic_in)
+        n_kpis = len(b)//n_path
 
-        l_delay = b[2::3]#[float(b[i]) for i in range(2, len(b), 3)]
-        l_drops = b[0::3] - b[1::3]
-
+        l_delay = b[2::n_kpis]
+        l_drops = b[0::n_kpis] - b[1::n_kpis] 
+        l_drops_rate = l_drops/b[0::n_kpis]
+        l_drops_bi = l_drops_rate > .1
         labels = {
-            "delay": tf.Variable(tf.constant(l_delay),name="delay"), #0
-            "drops": tf.Variable(tf.constant(l_drops),name="drops"), #1
+            "delay":  tf.Variable(tf.constant(l_delay),name="delay"), #0
+            "drops":  tf.Variable(tf.constant(l_drops),name="drops"), #1
+            "drop-rate":  tf.Variable(tf.constant(l_drops_rate),name="drops-rate"), #1
+            "drop-bi":  tf.Variable(tf.constant(tf.cast(l_drops_bi, tf.float32)),name="drops-bi") #1
         }
+        if n_kpis > 3:
+            l_jitter = b[3::n_kpis]
+            labels["jitter"] = tf.Variable(tf.constant(l_jitter),name="jitter") #2
+        if n_kpis > 4:
+            l_throughput = b[4::n_kpis]
+            labels["throughput"] = tf.Variable(tf.constant(l_throughput),name="throughput")  #2
+
         return features, labels
     
     
@@ -355,81 +492,81 @@ class PlanDataGensMulti(PlanDataGen):
      This class takes multiple input files and return a single combined data generator.
     """
     def __init__(self, filenames, graphFile, routing):
-        super(PlanDataGensMulti, self).__init__(filenames, graphFile, routing)
+        print('PlanDataGensMulti:', routing)
+        #super().__init__(filenames, graphFile, routing)
 
         # Split key performance indicators and traffic.
         kpis, tris = filenames
         assert len(tris) == len(kpis) == len(routing)
         
         # Initialiaze how kpi as pandas dataframe looks like.
-        self.kpiframeList = [pd.read_csv(k).reset_index(drop=True).values.astype(np.float32) for k in kpis]        
-        self.triframeList = [pd.read_csv(t).reset_index(drop=True).values.astype(np.float32) for t in tris]
+        self.kpiframeList = [pd.read_csv(k,header=None).reset_index(drop=True).values.astype(np.float32) for k in kpis]        
+        self.triframeList = [pd.read_csv(t,header=None).reset_index(drop=True).values.astype(np.float32) for t in tris]
         self.nList = [kf.shape[0] for kf in self.kpiframeList]
-        
+                
         # Number of datapoints 
         self.n = sum(self.nList)
         self.nCumu = np.concatenate([[i]*n for i,n in enumerate(self.nList)])
         
         # Create a graph (undir and dir version)
         assert len(graphFile) in [1, len(self.nList)]
+        
         #convert index to which topology
         self.proj_topo_index = (lambda i: 0) if len(graphFile) == 1 else (lambda i: self.nCumu[i])
+        
         #read all graphs
         self.graphTopoUndList, self.graphTopoDirList = [], []
         for g in graphFile:
-            multiGraph = nx.read_gml(g, destringizer=int)
-            self.graphTopoUndList.append(getTopology(multiGraph))
-            self.graphTopoDirList.append(getDirectedTopology(multiGraph))
-            
+            is_g, res = self.get_graphs_multi(g)
+            if is_g:
+                # returned graph instances
+                self.graphTopoUndList.append(res[0])
+                self.graphTopoDirList.append(res[1])
+            else:
+                # returned graph file names
+                self.graphTopoUndList.append(res)
+                self.graphTopoDirList.append(res)
+                                
         # Store routing 
-        self.pathsList = [get_paths_from_routing(r) for r in routing]
+        self.pathsList = [self.get_paths(r) for r in routing]
         
+    def get_graphs_multi(self, g):
+        if g.endswith('.gml'): 
+            multiGraph = nx.read_gml(g, destringizer=int)
+            if 'wifi' in g.lower():
+                return (True, (getTopologyWeighted(multiGraph), getDirectedTopologyWeighted(multiGraph)))
+            else:
+                return (True, (getTopology(multiGraph), getDirectedTopology(multiGraph)))
+        else: #txt
+            with open(g, 'r') as f:
+                graph_files = f.read().splitlines()
+            return (False, graph_files)
+                
     def on_epoch_end(self):
         # Do not shuffle data at the end of every epoch
         pass
-
-    def __getitem__(self, index=None):
-        """ 
-          Returns features and corresponding expected labels by reading topological features. 
-        """
+    
+    def get_prepare(self, index):
         # Determine which frame and topo to use
         ti = self.proj_topo_index(index)
         fi = self.nCumu[index]
         index -= sum(self.nCumu[:index])
         
-        self.graph_topology_undirected = self.graphTopoUndList[ti]
-        self.graph_topology_directed   = self.graphTopoDirList[ti]
         self.triframe = self.triframeList[fi]
         self.kpiframe = self.kpiframeList[fi]
         
+        # Graphs
+        self.graph_topology_undirected = self.graphTopoUndList[ti]
+        if isinstance(self.graph_topology_undirected, (list, tuple)):
+            self.read_graph_gml(self.graph_topology_undirected[index])
+            
+        self.graph_topology_directed = self.graphTopoDirList[ti]
+        if isinstance(self.graph_topology_directed, (list, tuple)):
+            self.read_graph_gml(self.graph_topology_directed[index])
+        
         # Get topological features as dictionary.
-        features=self.get_topological_features()
-
-        # Get values for specific data point 
-        a = self.triframe[index]
-        b = self.kpiframe[index]
-        
-        n_links = len(self.graph_topology_directed.edges())
-        f_capacities = [1.0]*n_links
-
-        traffic_in = a[0::2]
-        traffic_ot = a[1::2]
-        f_traffic = np.array([traffic_in, traffic_ot])
-
-        features["path_init"] = tf.Variable(tf.constant(f_traffic), name="path_init")
-        features["link_init"] = tf.Variable(tf.constant(f_capacities), name="link_init")
-
-        l_delay = b[2::3]
-        l_drops = b[0::3] - b[1::3]
-
-        labels = {
-            "delay": tf.Variable(tf.constant(l_delay),name="delay"), #0
-            "drops": tf.Variable(tf.constant(l_drops),name="drops"), #1
-        }
-        return features, labels
-        
-    def __len__(self):
-        return self.n 
-
+        if self.paths_all is not None:
+            self.paths = self.paths_all[index]
+        return index
         
     

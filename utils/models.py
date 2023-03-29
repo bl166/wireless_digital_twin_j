@@ -16,6 +16,10 @@ class PlanNet(tf.keras.Model):
         self.output_units     = output_units
         self.final_activation = final_activation
         self.train_on         = train_on[0]
+        if 'bi' in self.train_on:
+            self.loss_func = tf.keras.losses.BinaryCrossentropy(from_logits=False)
+        else:
+            self.loss_func = tf.keras.losses.MeanSquaredError()
         assert output_units == len(train_on)
 
     def _build_dims_helper(self):
@@ -74,14 +78,13 @@ class PlanNet(tf.keras.Model):
         self.readout.build(input_shape = [None, self.hparams['path_state_dim']])
         self.final.build(input_shape = [None, self.hparams['path_state_dim']+readout_units])
         self.built = True
-
     
     def call(self, inputs, training=False):
         #call == v ==
         f_ = inputs
-
+        
         #state init
-        shape = tf.stack([f_['n_links'],self.hparams['link_state_dim']-1], axis=0)
+        shape = tf.stack([f_['n_links'], self.hparams['link_state_dim']-1], axis=0)
         link_state = tf.concat([
             tf.expand_dims(f_['link_init'],axis=1),
             tf.zeros(shape)
@@ -105,8 +108,8 @@ class PlanNet(tf.keras.Model):
         seqs    = f_['sequences_paths_links']
         n_paths = f_['n_paths']
         
-        for _ in range(self.hparams['T']):
-
+        for t in range(self.hparams['T']):
+            
             ###################### PATH STATE #################################
             
             ids=tf.stack([paths, seqs], axis=1)
@@ -164,50 +167,48 @@ class PlanNet(tf.keras.Model):
 
         return o
     
-
+    
     def train_step(self, data):
         features, labels = data
-        print(type(features), type(labels))
-        
+        labels_on = labels[self.train_on]#tf.reshape(labels[self.train_on], [-1])
         with tf.GradientTape() as tape:
             predictions = self(features, training=True)
-            print('train_step | pred:', tf.math.reduce_any(tf.math.is_nan(predictions)), predictions.shape)
-            loc  = predictions[...,0]
-            kpi_prediction = loc
-            loss = tf.keras.metrics.mean_squared_error(labels[self.train_on], loc)
-            print('train_step | loss:', tf.math.reduce_any(tf.math.is_nan(loss)), tf.math.reduce_mean(loss))
+            #print('train_step | pred:', tf.math.reduce_any(tf.math.is_nan(predictions)), predictions.shape)
+            kpi_pred = predictions[...,0]
+            #print(kpi_pred.shape)
+            loss = self.loss_func(labels_on, kpi_pred) #tf.keras.metrics.mean_squared_error
+            #print('train_step | loss:', tf.math.reduce_any(tf.math.is_nan(loss)), tf.math.reduce_mean(loss))
 
             regularization_loss = tf.math.reduce_sum(self.losses)
             total_loss = loss + regularization_loss
             
         gradients = tape.gradient(total_loss, self.trainable_variables)
-        
         self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
         ret = {
-            'loss':loss,
-            f'label/mean/{self.train_on}':tf.math.reduce_mean(labels[self.train_on]),
-            f'prediction/mean/{self.train_on}': tf.math.reduce_mean(kpi_prediction)
+                'loss':loss,
+                'reg_loss':regularization_loss,
+                f'label/mean/{self.train_on}':tf.math.reduce_mean(labels_on),
+                f'prediction/mean/{self.train_on}': tf.math.reduce_mean(kpi_pred)
             }
         return ret
     
 
     def test_step(self, data):
         features, labels = data
-        print(features)
+        labels_on = labels[self.train_on]
         
         with tf.GradientTape() as tape:
             predictions = self(features, training=False)
-            loc  = predictions[...,0]
-            kpi_prediction = loc
-            loss = tf.keras.metrics.mean_squared_error(labels[self.train_on], loc)
-
+            kpi_pred = predictions[...,0]
+            loss = self.loss_func(labels_on, kpi_pred)
             regularization_loss = tf.math.reduce_sum(self.losses)
-            total_loss = loss + regularization_loss
+            #total_loss = loss + regularization_loss
             
         ret = {
-            'loss':loss,
-            f'label/mean/{self.train_on}':tf.math.reduce_mean(labels[self.train_on]),
-            f'prediction/mean/{self.train_on}': tf.math.reduce_mean(kpi_prediction)
+                'loss':loss,
+                'reg_loss':regularization_loss,
+                f'label/mean/{self.train_on}':tf.math.reduce_mean(labels_on),
+                f'prediction/mean/{self.train_on}': tf.math.reduce_mean(kpi_pred)
             }
         return ret
     
