@@ -1,5 +1,8 @@
+
 # wireless_digital_twin
 
+Download dataset from: https://drive.google.com/drive/folders/1fNyC9nHHppqyhet2WCWrTbdTVCh63T9U?usp=sharing
 
-## UnoNet Algorithm
-![alt text](https://github.com/kumarabhish3k/wireless_digital_twin/blob/main/unoNet_algorithm.png?raw=true)
+
+## PLAN-Net Algorithm
+![alt text](./figs/plannet-algo.png?raw=true)
