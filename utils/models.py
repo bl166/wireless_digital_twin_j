@@ -10,16 +10,18 @@ import tensorflow as tf
 
 
 class PlanNet(tf.keras.Model):
-    def __init__(self, hparams, output_units=1, final_activation=None, train_on=['delay']):
+    def __init__(self, hparams, output_units=1, final_activation=None, log_conversion=False, train_on=['delay']):
         super().__init__()
         self.hparams          = deepcopy(hparams)
         self.output_units     = output_units
         self.final_activation = final_activation
         self.train_on         = train_on[0]
+        self.conversion       = log_conversion
         if 'bi' in self.train_on:
             self.loss_func = tf.keras.losses.BinaryCrossentropy(from_logits=False)
         else:
             self.loss_func = tf.keras.losses.MeanSquaredError()
+            #self.loss_func = tf.keras.losses.MeanAbsoluteError()
         assert output_units == len(train_on)
 
     def _build_dims_helper(self):
@@ -170,7 +172,10 @@ class PlanNet(tf.keras.Model):
     
     def train_step(self, data):
         features, labels = data
-        labels_on = labels[self.train_on]#tf.reshape(labels[self.train_on], [-1])
+        if not self.conversion:
+            labels_on = labels[self.train_on]#tf.reshape(labels[self.train_on], [-1])
+        else:
+            labels_on = tf.math.log(labels[self.train_on]+1)
         with tf.GradientTape() as tape:
             predictions = self(features, training=True)
             #print('train_step | pred:', tf.math.reduce_any(tf.math.is_nan(predictions)), predictions.shape)
@@ -185,8 +190,8 @@ class PlanNet(tf.keras.Model):
         gradients = tape.gradient(total_loss, self.trainable_variables)
         self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
         ret = {
-                'loss':loss,
-                'reg_loss':regularization_loss,
+                'loss': loss,
+                'reg_loss': regularization_loss,
                 f'label/mean/{self.train_on}':tf.math.reduce_mean(labels_on),
                 f'prediction/mean/{self.train_on}': tf.math.reduce_mean(kpi_pred)
             }
@@ -195,18 +200,28 @@ class PlanNet(tf.keras.Model):
 
     def test_step(self, data):
         features, labels = data
-        labels_on = labels[self.train_on]
-        
+        if not self.conversion:
+            labels_on = labels[self.train_on]#tf.reshape(labels[self.train_on], [-1])
+        else:
+            labels_on = tf.math.log(labels[self.train_on]+1)        
         with tf.GradientTape() as tape:
             predictions = self(features, training=False)
             kpi_pred = predictions[...,0]
             loss = self.loss_func(labels_on, kpi_pred)
+            if not self.conversion:
+                maerr = tf.keras.metrics.mean_absolute_error(labels_on, kpi_pred)
+            else:
+                maerr = tf.keras.metrics.mean_absolute_error(
+                    tf.math.exp(labels_on)-1, 
+                    tf.math.exp(kpi_pred)-1
+                )
             regularization_loss = tf.math.reduce_sum(self.losses)
             #total_loss = loss + regularization_loss
             
         ret = {
                 'loss':loss,
                 'reg_loss':regularization_loss,
+                'mae': maerr, 
                 f'label/mean/{self.train_on}':tf.math.reduce_mean(labels_on),
                 f'prediction/mean/{self.train_on}': tf.math.reduce_mean(kpi_pred)
             }
@@ -215,8 +230,8 @@ class PlanNet(tf.keras.Model):
     
     
 class RouteNet(PlanNet):   
-    def __init__(self, hparams, output_units=1, final_activation=None, train_on='delay'):
-        super().__init__(hparams, output_units, final_activation, train_on)
+    def __init__(self, hparams, output_units=1, final_activation=None, log_conversion=False, train_on='delay'):
+        super().__init__(hparams, output_units, final_activation, log_conversion, train_on)
         self.hparams['node_state_dim'] = 0
     
     def call(self, inputs, training=False):

@@ -33,17 +33,23 @@ if __name__=="__main__":
     # Instantiate the parser
     parser = argparse.ArgumentParser()
     parser.add_argument('-c','--config', type=str, default='./configs/config.ini')
+    parser.add_argument('-m','--model', type=str, default='plannet')
+    parser.add_argument('-f','--cvfold', type=int, default=0)
+    parser.add_argument('--log_conversion', action='store_true')
     parser.add_argument('-r', '--resume', action='store_true')
     parser.add_argument('--no-resume', dest='resume', action='store_false')
     parser.set_defaults(resume=True)
     args = parser.parse_args()
-
+    
+    ##
     cfg_file = args.config #'./configs/config.ini'
-    config  = uf.PathConfigParser(cfg_file).as_dict()
     print(cfg_file)
+    config  = uf.PathConfigParser(cfg_file).as_dict()
+    if args.cvfold != 0:
+        config['Paths']['logs'][0] += f'/cv{args.cvfold}/'
     h_params = dict(**config['GNN'], **config['LearningParams'])
 
-    datagens, datasets = dg.get_data_gens_sets(config)
+    datagens, datasets = dg.get_data_gens_sets(config, fold=args.cvfold)
         
     initial_learning_rate = float(h_params['learning_rate'])
     lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
@@ -54,8 +60,11 @@ if __name__=="__main__":
 
     optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
 
-    model = PlanNet(h_params, train_on = config['Paths']['trainon'])
-    #model = RouteNet(h_params, train_on = config['Paths']['trainon'])
+    mcode = args.model.lower()[0]
+    if mcode == 'p':
+        model = PlanNet(h_params, log_conversion=args.log_conversion, train_on = config['Paths']['trainon'])
+    elif mcode == 'r':     
+        model = RouteNet(h_params, log_conversion=args.log_conversion , train_on = config['Paths']['trainon'])
     mclass = re.findall('\'.+\..+\.(.+)\'', str(model.__class__))[0] #<class 'utils.models.PlanNet'>
 
     # save model
@@ -63,10 +72,11 @@ if __name__=="__main__":
         #[' '.join(re.split('_|-',os.path.basename(d))).title().replace(' ', '') for d in config['Paths']['data']]
         [os.path.basename(d) for d in config['Paths']['data']]
     )
-    log_dir = os.path.join(config['Paths']['logs'][0], mclass, model_dirname)
+    log_dir = os.path.join(config['Paths']['logs'][0], mclass, model_dirname+'_log5')
     os.makedirs(log_dir, exist_ok = True)
     shutil.copyfile(cfg_file, os.path.join(log_dir, os.path.basename(cfg_file)))
     
+    iters_per_epoch = datagens['train'].__len__()
     tensorboard_callback = tf.keras.callbacks.TensorBoard(
         log_dir        = log_dir, 
         histogram_freq = 1
@@ -82,14 +92,22 @@ if __name__=="__main__":
     )
     model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
         os.path.join(log_dir, "cp-{epoch:04d}.ckpt"),
-        save_freq         = datagens['train'].__len__()*5,
+        save_freq         = iters_per_epoch*5,
         save_best_only    = False,
         save_weights_only = True,
         verbose           = 1
     )
-    model_best_callback = tf.keras.callbacks.ModelCheckpoint(
-        os.path.join(log_dir, "cp-best.ckpt"),
+    model_best_loss_callback = tf.keras.callbacks.ModelCheckpoint(
+        os.path.join(log_dir, "cp-best-loss.ckpt"),
         monitor           = 'val_loss',
+        mode              = 'min',
+        save_best_only    = True,
+        save_weights_only = True,
+        verbose           = 1
+    )
+    model_best_mae_callback = tf.keras.callbacks.ModelCheckpoint(
+        os.path.join(log_dir, "cp-best-mae.ckpt"),
+        monitor           = 'val_mae',
         mode              = 'min',
         save_best_only    = True,
         save_weights_only = True,
@@ -111,21 +129,24 @@ if __name__=="__main__":
     # resume training if possible
     model.build()
     model.compile(optimizer=optimizer, run_eagerly=False)
+    initial_epoch = 0
     if args.resume and os.path.exists(model_latest_callback.filepath):
         print('Loading weights from', model_latest_callback.filepath)
         ckpt = tf.train.Checkpoint(model)
         ckpt.restore(model_latest_callback.filepath)
         #model.load_weights(model_latest_callback.filepath)
+        initial_epoch = model.optimizer.iterations.numpy() // iters_per_epoch
 
     model.fit(
         x = datasets['train'].shuffle(datagens['train'].n, reshuffle_each_iteration=True),
         batch_size      = int(h_params['batch_size']), 
         epochs          = int(h_params['epochs']), 
-        initial_epoch   = 0,
+        initial_epoch   = initial_epoch,
         validation_data = datasets['validate'], 
         callbacks       = [
             model_checkpoint_callback,
-            model_best_callback,
+            model_best_loss_callback,
+            model_best_mae_callback,
             model_latest_callback,
             tensorboard_callback,
             csv_callback,

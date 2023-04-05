@@ -63,9 +63,14 @@ def get_paths_from_routing(routing):
 def get_paths_from_routing_dynamic(filename):
     paths = []
     with open(filename, 'r') as f:
-        for p in f.readlines():
-            paths.append(ast.literal_eval(p)) 
+        for i, p in enumerate(f.readlines()):
+            try:
+                paths.append(ast.literal_eval(p)) 
+            except:
+                print(i, filename, p)
+                paths.append(ast.literal_eval(p)) 
     return paths
+
 
 def getTopology(g):
     """
@@ -120,7 +125,7 @@ def getDirectedTopologyWeighted(g):
     return g1
 
 
-def get_data_gens_sets(config):
+def get_data_gens_sets(config, fold=0):
     """
     Inputs:
       -- dataPath is a string, a path to the directory which stores all the data.
@@ -146,23 +151,28 @@ def get_data_gens_sets(config):
     # To split into train/validate/test 
     files_kips, files_traf, files_path, files_grap = {}, {}, {}, {}
     input_argws_gen, datagens = {}, {}
-    for p in ['train', 'validate', 'test']:       
+    for p in ['train', 'validate', 'test']:     
+        if p != 'test':
+            pf = p if fold==0 else f'cv{fold}_{p}'
+        else:
+            pf = p 
+        
         # To include all Key Performance Indicators files 
-        files_kips[p] = sum([glob.glob(os.path.join(dp, p, '*kpis.txt')) for dp in config['Paths']['data']], [])
+        files_kips[p] = sum([glob.glob(os.path.join(dp, pf, '*kpis.txt')) for dp in config['Paths']['data']], [])
         files_kips[p].sort() ## You should make sure the file order is correct 
         
         # To include all traffic files 
-        files_traf[p] = sum([glob.glob(os.path.join(dp, p, '*traffic.txt')) for dp in config['Paths']['data']], [])
+        files_traf[p] = sum([glob.glob(os.path.join(dp, pf, '*traffic.txt')) for dp in config['Paths']['data']], [])
         files_traf[p].sort()
         
         # To include all paths files
-        files_path[p] = sum([glob.glob(os.path.join(dp, p, '*paths.txt')) for dp in config['Paths']['data']], [])
+        files_path[p] = sum([glob.glob(os.path.join(dp, pf, '*paths.txt')) for dp in config['Paths']['data']], [])
         files_path[p].sort()  
         
         # To include all graph files
         files_grap[p] = config['Paths']['graph']
         if not files_grap[p][0].endswith('gml'):
-            files_grap[p] = sum([glob.glob(os.path.join(dp, p, '*gfiles.txt')) for dp in config['Paths']['data']], [])
+            files_grap[p] = sum([glob.glob(os.path.join(dp, pf, '*gfiles.txt')) for dp in config['Paths']['data']], [])
             files_grap[p].sort()
         
         input_argws_gen[p] = {
@@ -175,7 +185,7 @@ def get_data_gens_sets(config):
     #i haven't figured out why but it will cause difference in validation.
     #might have something to do with whatever internal manipulation by tf.. weirdest thing i've ever seen @A@
     input_argws_set = dict(zip(['output_types', 'output_shapes'], get_output_format(datagens['train'])))
-    print('input_argws_set:', input_argws_set)
+    #print('input_argws_set:', input_argws_set)
 
     datasets = {}
     datasets['train'] = tf.data.Dataset.from_generator(
@@ -183,11 +193,11 @@ def get_data_gens_sets(config):
         **input_argws_set
     )
     datasets['validate'] = tf.data.Dataset.from_generator(
-        lambda: datagens['validate'],#PlanDataGensMulti(filenames=(files_kips['validate'], files_traf['validate']), **input_argws_gen['validate']), 
+        lambda: PlanDataGensMulti(filenames=(files_kips['validate'], files_traf['validate']), **input_argws_gen['validate']), 
         **input_argws_set
     )
     datasets['test'] = tf.data.Dataset.from_generator(
-        lambda: datagens['test'],#PlanDataGensMulti(filenames=(files_kips['test'], files_traf['test']), **input_argws_gen['test']), 
+        lambda: PlanDataGensMulti(filenames=(files_kips['test'], files_traf['test']), **input_argws_gen['test']), 
         **input_argws_set
     )
     return datagens, datasets
@@ -233,7 +243,7 @@ class PlanDataGen(tf.keras.utils.Sequence):
         tris = tris[0] if isinstance(tris, (list, tuple)) else tris
         graphFile = graphFile[0] if isinstance(graphFile, (list, tuple)) else graphFile
         routing = routing[0] if isinstance(routing, (list, tuple)) else routing
-        print("PlanDataGen:", routing)
+        #print("PlanDataGen:", routing)
         
         # Initialiaze how kpi as pandas dataframe looks like.
         kpiframe = pd.read_csv(kpis, header=None)
@@ -492,7 +502,7 @@ class PlanDataGensMulti(PlanDataGen):
      This class takes multiple input files and return a single combined data generator.
     """
     def __init__(self, filenames, graphFile, routing):
-        print('PlanDataGensMulti:', routing)
+        #print('PlanDataGensMulti:', routing)
         #super().__init__(filenames, graphFile, routing)
 
         # Split key performance indicators and traffic.
