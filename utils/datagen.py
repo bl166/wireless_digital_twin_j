@@ -125,6 +125,19 @@ def getDirectedTopologyWeighted(g):
     return g1
 
 
+def dataset_batchify(ds, bs, padding=True, batching=True):
+    if not batching:
+        return ds
+    if padding:
+        return ds.padded_batch(
+            bs, padding_values=({
+                k:tf.constant(-1,dtype=v.dtype) for k,v in ds.element_spec[0].items()
+            },None)
+        )
+    else:
+        return ds.batch(bs)
+
+
 def get_data_gens_sets(config, fold=0):
     """
     Inputs:
@@ -177,27 +190,51 @@ def get_data_gens_sets(config, fold=0):
         
         input_argws_gen[p] = {
             'graphFile': config['Paths']['graph'] if not files_grap[p] else files_grap[p],
-            'routing': config['Paths']['routing'] if not files_path[p] else files_path[p]
-        }
-        datagens[p] = PlanDataGensMulti( filenames=(files_kips[p], files_traf[p]), **input_argws_gen[p])
+            'routing'  : config['Paths']['routing'] if not files_path[p] else files_path[p],
+        }                
+        # whether to add noise
+        if 'add_noise' in config['LearningParams']:
+            input_argws_gen[p]['add_noise'] = config['LearningParams']['add_noise'] if p == 'train' else False        
         
+        datagens[p] = PlanDataGensMulti( 
+            filenames = (files_kips[p], files_traf[p]), 
+            **input_argws_gen[p],
+            label_scale = False,
+        )
+        
+        # whether to scale labels
+        scale_dict = None
+        if 'label_scale' in config['LearningParams'] and config['LearningParams']['label_scale']:
+            scale_dict = datagens[p].scale_labels(None if p == 'train' else datagens['train'].scale_dict)
+                
     #DO *NOT* WRITE THE FOLLOWING IN A LOOP!! 
-    #i haven't figured out why but it will cause difference in validation.
-    #might have something to do with whatever internal manipulation by tf.. weirdest thing i've ever seen @A@
+    #i haven't figured out why but it will cause difference in validation ... weird @A@
     input_argws_set = dict(zip(['output_types', 'output_shapes'], get_output_format(datagens['train'])))
     #print('input_argws_set:', input_argws_set)
 
     datasets = {}
     datasets['train'] = tf.data.Dataset.from_generator(
-        lambda: PlanDataGensMulti(filenames=(files_kips['train'], files_traf['train']), **input_argws_gen['train']), 
+        lambda: PlanDataGensMulti(
+            filenames=(files_kips['train'], files_traf['train']), 
+            label_scale = datagens['train'].scale_dict, 
+            **input_argws_gen['train'],
+        ), 
         **input_argws_set
     )
     datasets['validate'] = tf.data.Dataset.from_generator(
-        lambda: PlanDataGensMulti(filenames=(files_kips['validate'], files_traf['validate']), **input_argws_gen['validate']), 
+        lambda: PlanDataGensMulti(
+            filenames=(files_kips['validate'], files_traf['validate']), 
+            label_scale = datagens['train'].scale_dict, 
+            **input_argws_gen['validate']
+        ), 
         **input_argws_set
     )
     datasets['test'] = tf.data.Dataset.from_generator(
-        lambda: PlanDataGensMulti(filenames=(files_kips['test'], files_traf['test']), **input_argws_gen['test']), 
+        lambda: PlanDataGensMulti(
+            filenames=(files_kips['test'], files_traf['test']), 
+            label_scale = datagens['train'].scale_dict, 
+            **input_argws_gen['test']
+        ), 
         **input_argws_set
     )
     return datagens, datasets
@@ -227,15 +264,21 @@ class combinedDataGens(tf.keras.utils.Sequence):
 
     
 class PlanDataGen(tf.keras.utils.Sequence):
-    def __init__(self, filenames, graphFile, routing):
+    def __init__(self, filenames, graphFile, routing, label_scale=False, add_noise=False):
         """
           Inputs: 
             -- filanames is tuple with filenames for kpi and traffic.
                Each of elems in tuple is a srting of the filename.
             -- graphFile is pathname to read graph from. .gml filename.
             -- routing is numpy array with all paths (or routing tables filename).
+            
+          Labels: delay, jitter, throughput, drops, drops-rate, drops-bi
         """
         super().__init__()
+        self.l2c = {'packet_tx': 0, 'packet_rx': 1, 'delay': 2, 'jitter': 3, 'throughput': 4}
+        self.scale_dict = {'delay': 1, 'jitter': 1, 'throughput': 1, 'drops': 1}
+        self.n_kpis = 5
+        self.add_noise = add_noise
 
         # Split key performance indicators and traffic.
         kpis, tris = filenames
@@ -260,6 +303,25 @@ class PlanDataGen(tf.keras.utils.Sequence):
         
         # Paths
         self.get_paths(routing)
+        
+        if label_scale is not False: # None or dict
+            self.scale_labels(label_scale)
+        
+    def scale_labels(self, scale_dict=None):
+        if scale_dict is None:
+            # training data, calculate scales
+            scale_dict = self.scale_dict
+            for lab in scale_dict.keys():
+                if lab != 'drops':
+                    kpi_curr = self.kpiframe[:, self.l2c[lab]::self.n_kpis].reshape(-1)
+                else:
+                    tx = self.kpiframe[:, self.l2c['packet_tx']::self.n_kpis].reshape(-1)
+                    rx = self.kpiframe[:, self.l2c['packet_rx']::self.n_kpis].reshape(-1)
+                    kpi_curr = tx - rx
+                scale_dict[lab] = np.quantile(kpi_curr, 0.75) - np.quantile(kpi_curr, 0.25)
+        # update to training scales
+        self.scale_dict = scale_dict
+        return scale_dict
         
     def read_graph_gml(self, graphFile):
         # read single graph
@@ -311,11 +373,29 @@ class PlanDataGen(tf.keras.utils.Sequence):
             self.read_graph_gml(self.graph_files[index])
         return index
     
+    def get_kpis_convert(self, raw):
+        labels = {}
+        for lab in ['delay', 'jitter', 'throughput']:
+            labels[lab] = tf.Variable(
+                tf.constant(
+                    raw[..., self.l2c[lab]::self.n_kpis] / self.scale_dict[lab]
+                ),
+                name=lab
+            )
+        l_drops = raw[..., self.l2c['packet_tx']::self.n_kpis] - raw[..., self.l2c['packet_rx']::self.n_kpis] 
+        l_drops_rate = l_drops/raw[..., self.l2c['packet_tx']::self.n_kpis]
+        labels.update({
+            "drops":  tf.Variable(tf.constant(l_drops / self.scale_dict["drops"]),name="drops"), #1
+            "drop-rate":  tf.Variable(tf.constant(l_drops_rate),name="drops-rate"), #1
+            "drop-bi":  tf.Variable(tf.constant(tf.cast(l_drops_rate > .1, tf.float32)),name="drops-bi") #1
+        })    
+        return labels
+    
     def __getitem__(self, index=None):
         """ 
           Returns features and corresponding expected labels by reading topological features. 
         """
-        index = self.get_prepare(index)
+        index = self.get_prepare(index) # here the topo instance is indexed
         
         # Get topological features as dictionary.
         features = self.get_topological_features()
@@ -323,9 +403,12 @@ class PlanDataGen(tf.keras.utils.Sequence):
         # Get values for specific data point 
         a = self.triframe[index]
         b = self.kpiframe[index]
-        
+        if self.add_noise:
+            a += np.random.normal(scale=(a/10)**.5)
+                  
         n_links = len(self.graph_topology_directed.edges())
         try:
+            f_capacities = []
             for e in self.graph_topology_directed.edges():
                 f_capacities.append(self.graph_topology_directed[e[0]][e[1]]['weight'])
         except:
@@ -340,24 +423,11 @@ class PlanDataGen(tf.keras.utils.Sequence):
         
         n_path = len(traffic_in)
         n_kpis = len(b)//n_path
-
-        l_delay = b[2::n_kpis]
-        l_drops = b[0::n_kpis] - b[1::n_kpis] 
-        l_drops_rate = l_drops/b[0::n_kpis]
-        l_drops_bi = l_drops_rate > .1
-        labels = {
-            "delay":  tf.Variable(tf.constant(l_delay),name="delay"), #0
-            "drops":  tf.Variable(tf.constant(l_drops),name="drops"), #1
-            "drop-rate":  tf.Variable(tf.constant(l_drops_rate),name="drops-rate"), #1
-            "drop-bi":  tf.Variable(tf.constant(tf.cast(l_drops_bi, tf.float32)),name="drops-bi") #1
-        }
-        if n_kpis > 3:
-            l_jitter = b[3::n_kpis]
-            labels["jitter"] = tf.Variable(tf.constant(l_jitter),name="jitter") #2
-        if n_kpis > 4:
-            l_throughput = b[4::n_kpis]
-            labels["throughput"] = tf.Variable(tf.constant(l_throughput),name="throughput")  #2
-
+        assert self.n_kpis == n_kpis
+                
+        # label <--> column index
+        labels = self.get_kpis_convert(b)
+        
         return features, labels
     
     
@@ -496,22 +566,25 @@ class PlanDataGen(tf.keras.utils.Sequence):
     def __len__(self):
         return self.n 
     
-    
+        
 class PlanDataGensMulti(PlanDataGen):
     """
      This class takes multiple input files and return a single combined data generator.
     """
-    def __init__(self, filenames, graphFile, routing):
-        #print('PlanDataGensMulti:', routing)
+    def __init__(self, filenames, graphFile, routing, label_scale=False, add_noise=False):
         #super().__init__(filenames, graphFile, routing)
+        self.l2c = {'packet_tx': 0, 'packet_rx': 1, 'delay': 2, 'jitter': 3, 'throughput': 4}
+        self.scale_dict = {'delay': 1, 'jitter': 1, 'throughput': 1, 'drops': 1}
+        self.n_kpis = 5
+        self.add_noise=add_noise
 
         # Split key performance indicators and traffic.
         kpis, tris = filenames
         assert len(tris) == len(kpis) == len(routing)
         
         # Initialiaze how kpi as pandas dataframe looks like.
-        self.kpiframeList = [pd.read_csv(k,header=None).reset_index(drop=True).values.astype(np.float32) for k in kpis]        
         self.triframeList = [pd.read_csv(t,header=None).reset_index(drop=True).values.astype(np.float32) for t in tris]
+        self.kpiframeList = [pd.read_csv(k,header=None).reset_index(drop=True).values.astype(np.float32) for k in kpis]        
         self.nList = [kf.shape[0] for kf in self.kpiframeList]
                 
         # Number of datapoints 
@@ -539,6 +612,31 @@ class PlanDataGensMulti(PlanDataGen):
                                 
         # Store routing 
         self.pathsList = [self.get_paths(r) for r in routing]
+        
+        if label_scale is not False: # None or dict
+            self.scale_labels(label_scale)        
+        
+    def scale_labels(self, scale_dict=None):            
+        if scale_dict is None:
+            # training data, calculate scales
+            scale_dict = self.scale_dict
+            for lab in scale_dict.keys():
+                kpi_curr = []
+                if lab != 'drops':
+                    for df in self.kpiframeList:
+                        kpi_curr.append(df[:, self.l2c[lab]::self.n_kpis].reshape(-1)) # N x 10
+                    kpi_curr = np.hstack(kpi_curr)    
+                else:
+                    kpi_curr = []
+                    for df in self.kpiframeList:
+                        tx = df[:, self.l2c['packet_tx']::self.n_kpis].reshape(-1)
+                        rx = df[:, self.l2c['packet_rx']::self.n_kpis].reshape(-1)
+                        kpi_curr.append(tx - rx)
+                kpi_curr = np.hstack(kpi_curr)    
+                scale_dict[lab] = np.quantile(kpi_curr, 0.75) - np.quantile(kpi_curr, 0.25)
+        # update to training scales
+        self.scale_dict = scale_dict
+        return scale_dict       
         
     def get_graphs_multi(self, g):
         if g.endswith('.gml'): 

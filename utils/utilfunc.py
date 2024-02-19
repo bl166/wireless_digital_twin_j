@@ -1,9 +1,11 @@
 import configparser
+import warnings
+import numpy as np
 
 def str2num(x):
     if x.lower()[0] in ['t', 'f']:
         return eval(x)
-    return float(x) if '.' in x else int(x)
+    return float(x) if '.' in x or 'e' in x else int(x)
 
 
 class PathConfigParser(configparser.ConfigParser):
@@ -36,3 +38,23 @@ class dotdict(dict):
     __delattr__ = dict.__delitem__
     
 
+    
+def get_layers_weights(mdl, ltypes=['path_update', 'edge_update', 'node_update', 'readout', 'final']):
+    weights = {}
+    for i, li in enumerate(ltypes): 
+        layer = getattr(mdl, li)
+        weights[li] = []
+        
+        if isinstance(layer, dict):
+            weights[li] = {}
+            for k,v_layer in layer.items():
+                weights[li][k] = []
+                for w in v_layer.get_weights():
+                    weights[li][k].append(w.flatten())
+                weights[li][k] = np.hstack(weights[li][k])
+        else:
+            weights[li] = []
+            for w in layer.get_weights():
+                weights[li].append(w.flatten())            
+            weights[li] = np.hstack(weights[li])        
+    return weights
