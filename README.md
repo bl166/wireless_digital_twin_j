@@ -36,7 +36,7 @@ Uncompress `./dataset.zip`, which contains an example dataset (regular grid wifi
 
 If you also use Docker, try pulling [this image](https://hub.docker.com/r/bl41/digtwin) by
 ```
-$ docker pull bl41/digtwin
+$ docker pull bl41/digtwin:digtwin-py
 ```
 and run a container:
 ```
